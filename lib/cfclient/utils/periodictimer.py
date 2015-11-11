@@ -30,13 +30,13 @@ Implementation of a periodic timer that will call a callback every time
 the timer expires once started.
 """
 
-__author__ = 'Bitcraze AB'
-__all__ = ['PeriodicTimer']
-
 import logging
 from threading import Thread
 from cflib.utils.callbacks import Caller
 import time
+
+__author__ = 'Bitcraze AB'
+__all__ = ['PeriodicTimer']
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,9 @@ class PeriodicTimer:
 
     def start(self):
         """Start the timer"""
+        if self._thread:
+            logger.warning("Timer already started, not restarting")
+            return
         self._thread = _PeriodicTimerThread(self._period, self._callbacks)
         self._thread.setDaemon(True)
         self._thread.start()

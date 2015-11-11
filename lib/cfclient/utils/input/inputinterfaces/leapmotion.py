@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 #
-#     ||          ____  _ __                           
-#  +------+      / __ )(_) /_______________ _____  ___ 
+#     ||          ____  _ __
+#  +------+      / __ )(_) /_______________ _____  ___
 #  | 0xBC |     / __  / / __/ ___/ ___/ __ `/_  / / _ \
 #  +------+    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
 #   ||  ||    /_____/_/\__/\___/_/   \__,_/ /___/\___/
@@ -15,7 +15,7 @@
 #  modify it under the terms of the GNU General Public License
 #  as published by the Free Software Foundation; either version 2
 #  of the License, or (at your option) any later version.
-#  
+#
 #  This program is distributed in the hope that it will be useful,
 #  but WITHOUT ANY WARRANTY; without even the implied warranty of
 #  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -30,45 +30,29 @@
 Leap Motion reader for controlling the Crazyflie. Note that this reader needs
 the Leap Motion SDK to be manually copied. See lib/leapsdk/__init__.py for
 more info.
-
-Since the Leap Motion doesn't have the same kind of axes/buttons structure as
-other input devices this is faked using the following axis/button mapping:
-
-Axes
-----
-0: Roll (Positive when rotating right)
-1: Pitch (Positive when rotating forward)
-2: Yaw (Positive when rotating right)
-3: Thrust (the higher the detection, the higher the value)
-
-The axes is passed as raw values (in degrees), it's up to the scaling in the
-input map to convert them into usable values for flying.
-
-Buttons
--------
-0: 0 when five fingers are detected and 1 when less then fingers is detected
-
 """
-
-__author__ = 'Bitcraze AB'
-__all__ = ['LeapmotionReader']
 
 try:
     import leapsdk.Leap as Leap
-    from leapsdk.Leap import CircleGesture, KeyTapGesture, ScreenTapGesture, SwipeGesture
+    from leapsdk.Leap import CircleGesture, KeyTapGesture, ScreenTapGesture, \
+        SwipeGesture
 except Exception as e:
-    raise Exception("Leap Motion library probably not installed ({})".format(e))
+    raise Exception(
+        "Leap Motion library probably not installed ({})".format(e))
 
 import logging
 import time
+
+__author__ = 'Bitcraze AB'
+__all__ = ['LeapmotionReader']
 
 logger = logging.getLogger(__name__)
 
 MODULE_MAIN = "LeapmotionReader"
 MODULE_NAME = "Leap Motion"
 
-class LeapListener(Leap.Listener):
 
+class LeapListener(Leap.Listener):
     def set_data_callback(self, callback):
         self._dcb = callback
         self._nbr_of_fingers = 0
@@ -92,9 +76,7 @@ class LeapListener(Leap.Listener):
     def on_frame(self, controller):
         # Get the most recent frame and report some basic information
         frame = controller.frame()
-
-        #logger.info("Frame id: %d, timestamp: %d, hands: %d, fingers: %d, tools: %d, gestures: %d" % (
-        #                              frame.id, frame.timestamp, len(frame.hands), len(frame.fingers), len(frame.tools), len(frame.gestures())))
+        data = {"roll": 0, "pitch": 0, "yaw": 0, "thrust": 0}
         if not frame.hands.is_empty:
             # Get the first hand
             hand = frame.hands[0]
@@ -103,38 +85,26 @@ class LeapListener(Leap.Listener):
             direction = hand.direction
             # Pich and roll are mixed up...
 
-            #roll = -direction.pitch * Leap.RAD_TO_DEG / 30.0
-            #pitch = -normal.roll * Leap.RAD_TO_DEG / 30.0
-            #yaw = direction.yaw * Leap.RAD_TO_DEG / 70.0
-            #thrust = (hand.palm_position[1] - 80)/150.0 # Use the elevation of the hand for thrust
+            if len(hand.fingers) >= 4:
+                data["roll"] = -direction.pitch * Leap.RAD_TO_DEG / 30.0
+                data["pitch"] = -normal.roll * Leap.RAD_TO_DEG / 30.0
+                data["yaw"] = direction.yaw * Leap.RAD_TO_DEG / 70.0
+                # Use the elevation of the hand for thrust
+                data["thrust"] = (hand.palm_position[1] - 80) / 150.0
 
-            pitch = -direction.pitch * Leap.RAD_TO_DEG
-            roll = -normal.roll * Leap.RAD_TO_DEG
-            yaw = direction.yaw * Leap.RAD_TO_DEG
-            thrust = hand.palm_position[1]
+            if data["thrust"] < 0.0:
+                data["thrust"] = 0.0
+            if data["thrust"] > 1.0:
+                data["thrust"] = 1.0
 
-            axes = [roll, pitch, yaw, thrust]
-            buttons = [0]
+        self._dcb(data)
 
-            #if thrust < 0.0:
-            #    thrust = 0.0
-            #if thrust > 1.0:
-            #    thrust = 1.0
 
-            # Protect against accidental readings. When tilting the had
-            # fingers are sometimes lost so only use 4.
-            if len(hand.fingers) < 4:
-                self._dcb([0.0, 0.0, 0.0, 0.0], [0])
-            else:
-                self._dcb(axes, buttons)
-
-        else:
-            self._dcb([0.0, 0.0, 0.0, 0.0], [0])
-
-class LeapmotionReader():
+class LeapmotionReader:
     """Used for reading data from input devices using the PyGame API."""
+
     def __init__(self):
-        #pygame.init()
+        # pygame.init()
         self._ts = 0
         self._listener = LeapListener()
         self._listener.set_data_callback(self.leap_callback)
@@ -142,24 +112,33 @@ class LeapmotionReader():
         self._controller.add_listener(self._listener)
         self.name = MODULE_NAME
 
-        self._axes = None
-        self._buttons = None
+        self.limit_rp = True
+        self.limit_thrust = True
+        self.limit_yaw = True
+
+        self.data = {"roll": 0.0, "pitch": 0.0, "yaw": 0.0,
+                     "thrust": -1.0, "estop": False, "exit": False,
+                     "althold": False, "alt1": False, "alt2": False,
+                     "pitchNeg": False, "rollNeg": False,
+                     "pitchPos": False, "rollPos": False}
+        logger.info("Initialized Leap")
 
     def open(self, deviceId):
-        """Initalize the reading and open the device with deviceId and set the mapping for axis/buttons using the
-        inputMap"""
-        self._axes = [0.0, 0.0, 0.0, 0.0]
-        self._buttons = [0]
+        """
+        Initialize the reading and open the device with deviceId and set the
+        mapping for axis/buttons using the inputMap
+        """
+        return
 
-    def leap_callback(self, axes, buttons):
-        self._axes = axes
-        self._buttons = buttons
+    def leap_callback(self, data):
+        for k in list(data.keys()):
+            self.data[k] = data[k]
 
-    def read(self):
+    def read(self, id):
         """Read input from the selected device."""
-        return [self._axes, self._buttons]
+        return self.data
 
-    def close(self):
+    def close(self, id):
         return
 
     def devices(self):
@@ -167,9 +146,8 @@ class LeapmotionReader():
         dev = []
 
         # According to API doc only 0 or 1 devices is supported
-        #logger.info("Devs: {}".format(self._controller.is_connected))
+        # logger.info("Devs: {}".format(self._controller.is_connected))
         if self._controller.is_connected:
             dev.append({"id": 0, "name": "Leapmotion"})
-        
-        return dev
 
+        return dev

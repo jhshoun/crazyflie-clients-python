@@ -1,3 +1,6 @@
+Warning: Generating windows executable is not working yet with Python3. This is
+work in progress in issue #207. Any help is apreciated!
+
 Howto generate cfclient Windows installer
 =========================================
 
@@ -8,16 +11,21 @@ to generate the distribution are:
  - Generate the installer script
  - Build the installer
 
-All the procedure has to be run on Windows. Tested on Windows 7. A realease
+All the procedure has to be run on Windows. Tested on Windows 7. A release
 version should have the right version written to setup.py (ie. not a
 development version).
 
 Prerequisites
 -------------
-Nsis 2.46 (http://nsis.sourceforge.net/Download)
-Python 2.7
-py2exe (http://sourceforge.net/projects/py2exe/files/py2exe/0.6.9/)
-Jinja2 python module
+Should be all from source install + the following:
+ - [Python 3.4](https://www.python.org/downloads/windows/) (make sure the pip component is selected when installing)
+ - [Nsis 2.46](http://nsis.sourceforge.net/Download)
+ - [GIT](https://git-scm.com/download/win)
+
+Install the following with pip:
+```
+\Python34\python.exe -m pip install jinja2 py2exe
+```
 
 Procedure
 ---------
@@ -35,11 +43,11 @@ Run in a command line window:
 Test and validate the new executable by running:
 > dist\cfclient
 
-Generate the intaller configuration:
+Generate the installer configuration:
 > cd win32install
 > generate_nsis.py
  Found 516 files in 41 folders to install.
- Cfclient vertion 2013.4.1
+ Cfclient version 2013.4.1
 
 Finally open the win32install folder in the file explorer. Right click on
 cfclient.nsi, chose "Compile NSIS script (choose compressor)". The NSIS

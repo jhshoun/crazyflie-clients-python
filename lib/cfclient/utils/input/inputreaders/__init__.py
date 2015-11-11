@@ -23,7 +23,8 @@
 
 #  You should have received a copy of the GNU General Public License
 #  along with this program; if not, write to the Free Software
-#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+#  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+#  MA  02110-1301, USA.
 
 """
 Find all the available input readers and try to import them.
@@ -32,21 +33,22 @@ To create a new input device reader drop a .py file into this
 directory and it will be picked up automatically.
 """
 
-__author__ = 'Bitcraze AB'
-__all__ = ['InputDevice']
-
 import os
 import glob
 import logging
+from ..inputreaderinterface import InputReaderInterface
+
+__author__ = 'Bitcraze AB'
+__all__ = ['InputDevice']
 
 logger = logging.getLogger(__name__)
 
 found_readers = [os.path.splitext(os.path.basename(f))[0] for
-             f in glob.glob(os.path.dirname(__file__) + "/[A-Za-z]*.py")]
+                 f in glob.glob(os.path.dirname(__file__) + "/[A-Za-z]*.py")]
 if len(found_readers) == 0:
     found_readers = [os.path.splitext(os.path.basename(f))[0] for
-                 f in glob.glob(os.path.dirname(__file__) +
-                                "/[A-Za-z]*.pyc")]
+                     f in glob.glob(os.path.dirname(__file__) +
+                                    "/[A-Za-z]*.pyc")]
 
 logger.info("Found readers: {}".format(found_readers))
 
@@ -55,62 +57,50 @@ available_devices = []
 
 for reader in found_readers:
     try:
-        module = __import__(reader, globals(), locals(), [reader], -1)
+        module = __import__(reader, globals(), locals(), [reader], 1)
         main_name = getattr(module, "MODULE_MAIN")
         initialized_readers.append(getattr(module, main_name)())
         logger.info("Successfully initialized [{}]".format(reader))
     except Exception as e:
         logger.info("Could not initialize [{}]: {}".format(reader, e))
-        #import traceback
-        #logger.info(traceback.format_exc())
+
 
 def devices():
     # Todo: Support rescanning and adding/removing devices
     if len(available_devices) == 0:
-        for reader in initialized_readers:
-            devs = reader.devices()
+        for r in initialized_readers:
+            devs = r.devices()
             for dev in devs:
                 available_devices.append(InputDevice(dev["name"],
                                                      dev["id"],
-                                                     reader))
+                                                     r))
     return available_devices
 
-class InputDevice():
+
+class InputDevice(InputReaderInterface):
     def __init__(self, dev_name, dev_id, dev_reader):
-        self._reader = dev_reader
-        self.id = dev_id
-        self.name = dev_name
-        self.input_map = None
-        self.data = None
-        self._prev_pressed = None
-        self.reader_name = dev_reader.name
+        super(InputDevice, self).__init__(dev_name, dev_id, dev_reader)
+
+        # All devices supports mapping (and can be configured)
+        self.supports_mapping = True
+
+        # Limit roll/pitch/yaw/thrust for all devices
+        self.limit_rp = True
+        self.limit_thrust = True
+        self.limit_yaw = True
 
     def open(self):
-        self.data = {"roll": 0.0, "pitch": 0.0, "yaw": 0.0,
-                     "thrust": -1.0, "estop": False, "exit":False,
-                     "althold": False, "alt1": False, "alt2": False,
-                     "pitchNeg": False, "rollNeg": False,
-                     "pitchPos": False, "rollPos": False}
-
+        # TODO: Reset data?
         self._reader.open(self.id)
 
     def close(self):
-        self._reader.close()
-
-    def _zero_all_buttons(self):
-        buttons = ("estop", "exit", "althold", "alt1", "alt2", "rollPos",
-                   "rollNeg", "pitchPos", "pitchNeg")
-        for b in buttons:
-            self.data[b] = False
+        self._reader.close(self.id)
 
     def read(self, include_raw=False):
-        [axis, buttons] = self._reader.read()
+        [axis, buttons] = self._reader.read(self.id)
 
         # To support split axis we need to zero all the axis
-        self.data["roll"] = 0.0
-        self.data["pitch"] = 0.0
-        self.data["yaw"] = 0.0
-        self.data["thrust"] = 0.0
+        self.data.reset_axes()
 
         i = 0
         for a in axis:
@@ -120,15 +110,14 @@ class InputDevice():
                     key = self.input_map[index]["key"]
                     axisvalue = a + self.input_map[index]["offset"]
                     axisvalue = axisvalue / self.input_map[index]["scale"]
-                    self.data[key] += axisvalue
-            except Exception:
-                #logger.warning("Axis {}".format(i))
+                    self.data.set(key, axisvalue + self.data.get(key))
+            except (KeyError, TypeError):
                 pass
             i += 1
 
         # Workaround for fixing issues during mapping (remapping buttons while
         # they are pressed.
-        self._zero_all_buttons()
+        self.data.reset_buttons()
 
         i = 0
         for b in buttons:
@@ -136,11 +125,21 @@ class InputDevice():
             try:
                 if self.input_map[index]["type"] == "Input.BUTTON":
                     key = self.input_map[index]["key"]
-                    self.data[key] = True if b == 1 else False
-            except Exception:
+                    self.data.set(key, True if b == 1 else False)
+            except (KeyError, TypeError):
                 # Button not mapped, ignore..
                 pass
             i += 1
+
+        if self.limit_rp:
+            [self.data.roll, self.data.pitch] = self._scale_rp(self.data.roll,
+                                                               self.data.pitch)
+        if self.limit_thrust:
+            self.data.thrust = self._limit_thrust(self.data.thrust,
+                                                  self.data.althold,
+                                                  self.data.estop)
+        if self.limit_yaw:
+            self.data.yaw = self._scale_and_deadband_yaw(self.data.yaw)
 
         if include_raw:
             return [axis, buttons, self.data]
